@@ -35,11 +35,3 @@ Google pixel手机及VPN使用心得[视频教程系列](https://www.youtube.com
 --------------------------------------------------------
 ### 感谢支持！微信打赏甬哥侃侃侃ygkkk
 ![41440820a366deeb8109db5610313a1](https://github.com/user-attachments/assets/551cc2e1-a55a-444b-9c9c-2419ee5f14df)
-
---------------------------------------------------------
-
-### 感谢你右上角的star🌟
-[![Stargazers over time](https://starchart.cc/yonggekkk/google_vpn_proxy.svg)](https://starchart.cc/yonggekkk/google_vpn_proxy)
-
----------------------------------------
-#### 声明：所有代码来源于Github社区与ChatGPT的整合，[gost](https://github.com/go-gost/gost/releases)、[Termux](https://github.com/termux/termux-app/releases)
