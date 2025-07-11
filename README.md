@@ -6,6 +6,11 @@
 
 #### 一键脚本如下，快捷运行方式 ```bash gv.sh```
 
+
+```
+pkg upgrade -y && bash <(curl -Ls https://raw.githubusercontent.com/newhats/GoogleVpnProxy/refs/heads/main/gv.sh)
+```
+
 ```
 pkg upgrade -y && bash <(curl -Ls https://gh-proxy.com/https://raw.githubusercontent.com/yonggekkk/google_vpn_proxy/main/gv.sh)
 ```
