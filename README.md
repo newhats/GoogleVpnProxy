@@ -12,7 +12,7 @@ pkg upgrade -y && bash <(curl -Ls https://raw.githubusercontent.com/newhats/Goog
 ```
 
 ```
-pkg upgrade -y && bash <(curl -Ls https://gh-proxy.com/https://raw.githubusercontent.com/yonggekkk/google_vpn_proxy/main/gv.sh)
+pkg upgrade -y && bash <(curl -Ls https://gh-proxy.com/https://raw.githubusercontent.com/newhats/GoogleVpnProxy/refs/heads/main/gv.sh)
 ```
 
 #### 可在Termux输入命令 ```ifconfig``` 查看内网IP地址，并填写在支持Socks5或者Http的客户端上
