@@ -1,115 +1,168 @@
-#!/bin/bash
+#!/data/data/com.termux/files/usr/bin/bash
+
+# 安装目录固定在 Termux HOME 下，避免相对路径混乱
+INSTALL_DIR="$HOME/gost_share"
+PROFILE_AUTOSTART="$PREFIX/etc/profile.d/gost_autostart.sh"
+
+get_arch() {
+    case "$(uname -m)" in
+        aarch64|arm64) echo "arm64" ;;
+        armv7*|armhf)  echo "armv7" ;;
+        x86_64|amd64)  echo "amd64" ;;
+        i386|i686)     echo "386" ;;
+        *)             echo "arm64" ;;
+    esac
+}
+
+check_dependencies() {
+    pkg install -y screen curl tar >/dev/null 2>&1
+    # 启用 Termux 防休眠锁，防止锁屏后断网
+    if command -v termux-wake-lock >/dev/null 2>&1; then
+        termux-wake-lock
+    fi
+}
+
 gvinstall(){
-pkg install -y screen
-if [ ! -e gost ]; then
-echo "下载中……"
-curl -L -o gost_3.3.3_linux_arm64.tar.gz -# --retry 2 --insecure https://github.com/go-gost/gost/releases/download/v3.3.3/gost_3.3.3_linux_arm64.tar.gz
-tar zxvf gost_3.3.3_linux_arm64.tar.gz
+    check_dependencies
+    mkdir -p "$INSTALL_DIR"
+    cd "$INSTALL_DIR" || exit 1
+
+    ARCH=$(get_arch)
+    GOST_VER="3.3.3"
+    TAR_FILE="gost_${GOST_VER}_linux_${ARCH}.tar.gz"
+    DOWNLOAD_URL="https://github.com/go-gost/gost/releases/download/v${GOST_VER}/${TAR_FILE}"
+    MIRROR_URL="https://gh-proxy.com/${DOWNLOAD_URL}"
+
+    if [ ! -f "gost" ]; then
+        echo "正在下载 GOST (v${GOST_VER} - ${ARCH})..."
+        if ! curl -L -# --retry 2 --connect-timeout 8 "$DOWNLOAD_URL" -o "$TAR_FILE"; then
+            echo "Github 直连失败，尝试镜像节点中转下载..."
+            curl -L -# --retry 2 --connect-timeout 8 "$MIRROR_URL" -o "$TAR_FILE"
+        fi
+
+        if [ -f "$TAR_FILE" ]; then
+            tar -zxvf "$TAR_FILE" >/dev/null 2>&1
+            rm -f "$TAR_FILE" README* LICENSE*
+            chmod +x gost
+        fi
+    fi
+
+    if [ ! -f "gost" ]; then
+        echo "❌ 下载失败！请检查网络或开启代理后重试。"
+        exit 1
+    fi
+
+    # 端口设置与冲突检查
+    read -rp "设置 Socks5 端口（回车随机 10000-65535）：" socks_port
+    [[ -z "$socks_port" ]] && socks_port=$(shuf -i 10000-65535 -n 1)
+
+    read -rp "设置 Http 端口（回车随机 10000-65535）：" http_port
+    [[ -z "$http_port" ]] && http_port=$(shuf -i 10000-65535 -n 1)
+
+    while [ "$socks_port" -eq "$http_port" ]; do
+        http_port=$(shuf -i 10000-65535 -n 1)
+    done
+
+    echo "✅ 已分配 Socks5 端口: $socks_port | Http 端口: $http_port"
+
+    # 生成 config.yaml (采用 EOF 覆盖写入，支持 fallback DNS)
+    cat <<EOF > "$INSTALL_DIR/config.yaml"
+services:
+  - name: service-socks5
+    addr: ":$socks_port"
+    resolver: resolver-0
+    handler:
+      type: socks5
+      metadata:
+        udp: true
+        udpbuffersize: 4096
+    listener:
+      type: tcp
+  - name: service-http
+    addr: ":$http_port"
+    resolver: resolver-0
+    handler:
+      type: http
+      metadata:
+        udp: true
+        udpbuffersize: 4096
+    listener:
+      type: tcp
+resolvers:
+  - name: resolver-0
+    nameservers:
+      - addr: 8.8.8.8:53
+        ttl: 5m0s
+      - addr: 1.1.1.1:53
+        ttl: 5m0s
+      - addr: tls://8.8.8.8:853
+        ttl: 5m0s
+        async: true
+EOF
+
+    # 停止旧进程
+    pkill -f "gost -C.*config.yaml" >/dev/null 2>&1
+
+    # 重新生成 Termux 自动唤起脚本 (修复绝对路径与追加 Bug)
+    cat <<EOF > "$PROFILE_AUTOSTART"
+#!/data/data/com.termux/files/usr/bin/bash
+if ! pgrep -f "$INSTALL_DIR/gost" > /dev/null; then
+    screen -wipe >/dev/null 2>&1
+    screen -dmS gost_share bash -c 'cd "$INSTALL_DIR" && ./gost -C config.yaml'
 fi
-if [ ! -e gost ]; then
-echo "当前网络无法链接Github，切换中转下载"
-curl -L -o gost_3.3.3_linux_arm64.tar.gz -# --retry 2 --insecure https://gh-proxy.com/https://github.com/go-gost/gost/releases/download/v3.3.3/gost_3.3.3_linux_arm64.tar.gz
-tar zxvf gost_3.3.3_linux_arm64.tar.gz
-fi
-if [ ! -e gost ]; then
-echo "下载失败，请在代理环境下运行脚本" && exit
-fi
-rm -f gost_3.3.3_linux_arm64.tar.gz README* LICENSE* config.yaml
-read -p "设置 Socks5 端口（回车跳过为10000-65535之间的随机端口）：" socks_port
-if [ -z "$socks_port" ]; then
-socks_port=$(shuf -i 10000-65535 -n 1)
-fi
-read -p "设置 Http 端口（回车跳过为10000-65535之间的随机端口）：" http_port
-if [ -z "$http_port" ]; then
-http_port=$(shuf -i 10000-65535 -n 1)
-fi
-echo "你设置的 Socks5 端口：$socks_port 和 Http 端口：$http_port" && sleep 2
-echo 'services:' >> config.yaml
-echo '  - name: service-socks5' >> config.yaml
-echo "    addr: \":$socks_port\"" >> config.yaml
-echo '    resolver: resolver-0' >> config.yaml
-echo '    handler:' >> config.yaml
-echo '      type: socks5' >> config.yaml
-echo '      metadata:' >> config.yaml
-echo '        udp: true' >> config.yaml
-echo '        udpbuffersize: 4096' >> config.yaml
-echo '    listener:' >> config.yaml
-echo '      type: tcp' >> config.yaml
-echo '  - name: service-http' >> config.yaml
-echo "    addr: \":$http_port\"" >> config.yaml
-echo '    resolver: resolver-0' >> config.yaml
-echo '    handler:' >> config.yaml
-echo '      type: http' >> config.yaml
-echo '      metadata:' >> config.yaml
-echo '        udp: true' >> config.yaml
-echo '        udpbuffersize: 4096' >> config.yaml
-echo '    listener:' >> config.yaml
-echo '      type: tcp' >> config.yaml
-echo 'resolvers:' >> config.yaml
-echo '  - name: resolver-0' >> config.yaml
-echo '    nameservers:' >> config.yaml
-echo '      - addr: tls://8.8.8.8:853' >> config.yaml
-echo '        prefer: ipv4' >> config.yaml
-echo '        ttl: 5m0s' >> config.yaml
-echo '        async: true' >> config.yaml
-echo '      - addr: tls://8.8.4.4:853' >> config.yaml
-echo '        prefer: ipv4' >> config.yaml
-echo '        ttl: 5m0s' >> config.yaml
-echo '        async: true' >> config.yaml
-echo '      - addr: tls://[2001:4860:4860::8888]:853' >> config.yaml
-echo '        prefer: ipv6' >> config.yaml
-echo '        ttl: 5m0s' >> config.yaml
-echo '        async: true' >> config.yaml
-echo '      - addr: tls://[2001:4860:4860::8844]:853' >> config.yaml
-echo '        prefer: ipv6' >> config.yaml
-echo '        ttl: 5m0s' >> config.yaml
-echo '        async: true' >> config.yaml
-cd /data/data/com.termux/files/usr/etc/profile.d
-echo '#!/data/data/com.termux/files/usr/bin/bash' >> gost.sh
-echo 'screen -wipe' >> gost.sh
-echo "screen -ls | grep Detached | cut -d. -f1 | awk '{print $1}' | xargs kill" >> gost.sh
-echo "screen -dmS myscreen bash -c './gost -C config.yaml'" >> gost.sh
-chmod +x gost.sh
-echo "安装完毕" 
-echo
-echo "快捷方式：bash gv.sh  可查看Socks5端口与Http端口"
-echo "退出脚本运行：exit"
-sleep 2
-exit
+EOF
+    chmod +x "$PROFILE_AUTOSTART"
+
+    # 立即启动
+    screen -wipe >/dev/null 2>&1
+    screen -dmS gost_share bash -c "cd '$INSTALL_DIR' && ./gost -C config.yaml"
+
+    echo "================================================"
+    echo "🎉 服务已启动！"
+    echo "本地局域网 IP 可使用 'ifconfig' 或 Termux WiFi 查看"
+    echo "Socks5: :$socks_port"
+    echo "HTTP  : :$http_port"
+    echo "================================================"
 }
+
 uninstall(){
-screen -ls | grep Detached | cut -d. -f1 | awk '{print $1}' | xargs kill
-rm -f gost config.yaml gv.sh
-echo "卸载完毕"
+    echo "正在卸载并停止代理服务..."
+    pkill -f "gost -C.*config.yaml" >/dev/null 2>&1
+    screen -S gost_share -X quit >/dev/null 2>&1
+    rm -rf "$INSTALL_DIR"
+    rm -f "$PROFILE_AUTOSTART"
+    echo "✅ 卸载清理完毕！"
 }
+
+show_status(){
+    if [ -f "$INSTALL_DIR/config.yaml" ]; then
+        s_port=$(grep -A 2 'service-socks5' "$INSTALL_DIR/config.yaml" | grep 'addr' | awk -F':' '{print $3}' | tr -d '\" ')
+        h_port=$(grep -A 2 'service-http' "$INSTALL_DIR/config.yaml" | grep 'addr' | awk -F':' '{print $3}' | tr -d '\" ')
+        echo "当前状态: 已安装"
+        echo "Socks5 端口: ${s_port:-未知}"
+        echo "Http   端口: ${h_port:-未知}"
+    else
+        echo "当前状态: 未安装"
+    fi
+}
+
 show_menu(){
-curl -sSL https://raw.githubusercontent.com/newhats/google_vpn_proxy/main/gv.sh -o gv.sh && chmod +x gv.sh
-clear
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
-echo "甬哥Github项目  ：github.com/yonggekkk"
-echo "甬哥Blogger博客 ：ygkkk.blogspot.com"
-echo "甬哥YouTube频道 ：www.youtube.com/@ygkkk"
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
-echo "Google_VPN局域网共享代理：Socks5+Http双代理一键脚本"
-echo "快捷方式：bash gv.sh"
-echo "退出脚本运行：exit"
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
-echo " 1. 重置安装"
-echo " 2. 删除卸载"
-echo " 0. 退出"
-echo "------------------------------------------------"
-if [[ -e config.yaml ]]; then
-echo "当前使用的Socks5端口：$(cat config.yaml 2>/dev/null | grep 'service-socks5' -A 2 | grep 'addr' | awk -F':' '{print $3}' | tr -d '\"')" 
-echo "当前使用的Http端口：$(cat config.yaml 2>/dev/null | grep 'service-http' -A 2 | grep 'addr' | awk -F':' '{print $3}' | tr -d '\"')"
-else
-echo "未安装，请选择 1 进行安装"
-fi
-echo "------------------------------------------------"
-read -p "请输入数字:" Input
-case "$Input" in     
- 1 ) gvinstall;;
- 2 ) uninstall;;
- * ) exit 
-esac
+    clear
+    echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
+    echo "   Google VPN / 手机代理局域网共享增强版"
+    echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" 
+    echo " 1. 安装 / 重置配置"
+    echo " 2. 停止并完全卸载"
+    echo " 0. 退出"
+    echo "------------------------------------------------"
+    show_status
+    echo "------------------------------------------------"
+    read -rp "请输入选项 [0-2]: " Input
+    case "$Input" in     
+        1) gvinstall ;;
+        2) uninstall ;;
+        *) exit 0 ;;
+    esac
 }
+
 show_menu
